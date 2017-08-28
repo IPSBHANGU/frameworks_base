@@ -2060,4 +2060,8 @@
     <string name="touch_filtered_warning">Because an app is obscuring a permission request, Settings
         can’t verify your response.</string>
 
+    <!-- Advanced Reboot-->
+    <string name="global_action_restart_advanced">Advanced reboot</string>
+    <string name="global_action_restart_recovery">Go to recovery</string>
+    <string name="global_action_restart_bootloader">Go to bootloader</string>
 </resources>

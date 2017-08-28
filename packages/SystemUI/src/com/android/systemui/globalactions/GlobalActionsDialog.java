@@ -127,6 +127,7 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener, DialogIn
     private static final String TAG = "GlobalActionsDialog";
 
     private static final boolean SHOW_SILENT_TOGGLE = false;
+    private static final String GLOBAL_ACTION_KEY_RESTART_RECOVERY = "recovery";
 
     private final Context mContext;
     private final GlobalActionsManager mWindowManagerFuncs;
@@ -138,12 +139,13 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener, DialogIn
 
     private Action mSilentModeAction;
     private ToggleAction mAirplaneModeOn;
+    private ToggleAction.State mAirplaneState = ToggleAction.State.Off;
+    private ToggleRestartAdvancedAction mRestartAdvancedAction;
 
     private MyAdapter mAdapter;
 
     private boolean mKeyguardShowing = false;
     private boolean mDeviceProvisioned = false;
-    private ToggleAction.State mAirplaneState = ToggleAction.State.Off;
     private boolean mIsWaitingForEcmExit = false;
     private boolean mHasTelephony;
     private boolean mHasVibrator;
@@ -403,6 +405,23 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener, DialogIn
         };
         onAirplaneModeChanged();
 
+        mRestartAdvancedAction = new ToggleRestartAdvancedAction(
+                com.android.systemui.R.drawable.ic_restart_advanced,
+                com.android.systemui.R.drawable.ic_restart_advanced,
+                com.android.systemui.R.string.global_action_restart_advanced,
+                com.android.systemui.R.string.global_action_restart_recovery,
+                com.android.systemui.R.string.global_action_restart_bootloader,
+                mWindowManagerFuncs, mHandler) {
+
+            public boolean showDuringKeyguard() {
+                return true;
+            }
+
+            public boolean showBeforeProvisioning() {
+                return true;
+            }
+        };
+
         mItems = new ArrayList<Action>();
 
         // Always add the power off and restart options if we're not in advanced restart submenu
@@ -462,6 +481,8 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener, DialogIn
             } else if (GLOBAL_ACTION_KEY_RESTART_DOWNLOAD.equals(actionKey) &&
                     PowerMenuUtils.isAdvancedRestartPossible(mContext)) {
                 mItems.add(new RestartDownloadAction());
+            } else if (GLOBAL_ACTION_KEY_RESTART_RECOVERY.equals(actionKey)) {
+                mItems.add(mRestartAdvancedAction);
             } else {
                 Log.e(TAG, "Invalid global action key " + actionKey);
             }
@@ -1030,7 +1051,8 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener, DialogIn
     /** {@inheritDoc} */
     public void onClick(DialogInterface dialog, int which) {
         Action item = mAdapter.getItem(which);
-        if (!(item instanceof SilentModeTriStateAction)) {
+        if (!(item instanceof SilentModeTriStateAction) &&
+                !(item instanceof ToggleRestartAdvancedAction)) {
             dialog.dismiss();
         }
         item.onPress();
@@ -1360,6 +1382,105 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener, DialogIn
         }
     }
 
+    /**
+     * A toggle action knows whether it is on or off, and displays an icon
+     * and status message accordingly.
+     */
+    private static abstract class ToggleRestartAdvancedAction implements Action,
+            View.OnClickListener, View.OnLongClickListener {
+
+        enum State {
+            Recovery,
+            Bootloader;
+        }
+
+        protected State mState = State.Recovery;
+
+        protected int mRecoveryIconResid;
+        protected int mBootloaderIconResid;
+        protected int mMessageResId;
+        protected int mRecoveryMessageResId;
+        protected int mBootloaderMessageResId;
+        protected GlobalActionsManager mWmFuncs;
+        protected Handler mRefresh;
+
+        public ToggleRestartAdvancedAction(int recoveryIconResid,
+                int bootloaderIconResid,
+                int message,
+                int recoveryMessageResId,
+                int bootloaderMessageResId,
+                GlobalActionsManager funcs,
+                Handler handler) {
+            mRecoveryIconResid = recoveryIconResid;
+            mBootloaderIconResid = bootloaderIconResid;
+            mMessageResId = message;
+            mRecoveryMessageResId = recoveryMessageResId;
+            mBootloaderMessageResId = bootloaderMessageResId;
+            mWmFuncs = funcs;
+            mRefresh = handler;
+        }
+
+        @Override
+        public CharSequence getLabelForAccessibility(Context context) {
+            return context.getString(mMessageResId);
+        }
+
+        public View create(Context context, View convertView, ViewGroup parent,
+                LayoutInflater inflater) {
+
+            View v = inflater.inflate(R
+                            .layout.global_actions_item, parent, false);
+            v.setOnClickListener(this);
+            v.setOnLongClickListener(this);
+
+            ImageView icon = (ImageView) v.findViewById(R.id.icon);
+            TextView messageView = (TextView) v.findViewById(R.id.message);
+            TextView statusView = (TextView) v.findViewById(R.id.status);
+
+            if (messageView != null) {
+                messageView.setText(mMessageResId);
+            }
+
+            boolean bootloader = (mState == State.Bootloader);
+            if (icon != null) {
+                icon.setImageDrawable(context.getDrawable(
+                        (bootloader ? mBootloaderIconResid : mRecoveryIconResid)));
+            }
+
+            if (statusView != null) {
+                statusView.setText(bootloader ? mBootloaderMessageResId : mRecoveryMessageResId);
+                statusView.setVisibility(View.VISIBLE);
+            }
+
+            return v;
+        }
+
+        public void onClick(View v) {
+            onPress();
+        }
+
+        public final void onPress() {
+            if (mState == State.Recovery) {
+                mState = State.Bootloader;
+            } else {
+                mState = State.Recovery;
+            }
+            mRefresh.sendEmptyMessage(MESSAGE_REFRESH_ADVANCED_REBOOT);
+        }
+
+        public boolean onLongClick (View v) {
+            mRefresh.sendEmptyMessage(MESSAGE_DISMISS);
+            boolean bootloader = (mState == State.Bootloader);
+            mWmFuncs.advancedReboot(bootloader ? PowerManager.REBOOT_BOOTLOADER
+                    : PowerManager.REBOOT_RECOVERY);
+            return true;
+        }
+
+        public boolean isEnabled() {
+            return true;
+        }
+    }
+
     private class SilentModeToggleAction extends ToggleAction {
         public SilentModeToggleAction() {
             super(R.drawable.ic_audio_vol_mute,
@@ -1511,6 +1632,7 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener, DialogIn
     private static final int MESSAGE_DISMISS = 0;
     private static final int MESSAGE_REFRESH = 1;
     private static final int MESSAGE_SHOW = 2;
+    private static final int MESSAGE_REFRESH_ADVANCED_REBOOT = 3;
     private static final int DIALOG_DISMISS_DELAY = 300; // ms
     private static final int DIALOG_SHOW_DELAY = 300; // ms
 
@@ -1530,6 +1652,9 @@ class GlobalActionsDialog implements DialogInterface.OnDismissListener, DialogIn
                 case MESSAGE_SHOW:
                     handleShow();
                     break;
+                case MESSAGE_REFRESH_ADVANCED_REBOOT:
+	            mAdapter.notifyDataSetChanged();
+        	    break;
             }
         }
     };

@@ -38,5 +38,6 @@ public interface GlobalActions extends Plugin {
 
         void shutdown();
         void reboot(boolean safeMode, String reason);
+        void advancedReboot(String mode);
     }
 }
